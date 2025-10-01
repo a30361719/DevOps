@@ -1,35 +1,28 @@
-```yaml
 name: Update README Activity
 
 on:
-  workflow_dispatch:
-    inputs:
-      target_ref:
-        description: 'Branch to run on (default: main)'
-        required: false
-        default: main
-        type: string
-  #schedule:
-    #- cron: "0 */6 * * *"   # 每 6 小時跑一次，可自行調整
+  workflow_dispatch: {}          # 手動觸發（從 UI 選分支即可）
+  # 如要定期執行可解開：
+  # schedule:
+  #   - cron: "0 */6 * * *"      # 每 6 小時跑一次
 
 permissions:
-  contents: write           # 最小必要權限
+  contents: write                # 最小必要權限
   pull-requests: read
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    env:
-      TARGET_REF: ${{ inputs.target_ref }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TARGET_REF }}
+          # 跑在哪個分支就 checkout 那個分支（手動觸發時會用 UI 選擇）
+          ref: ${{ github.ref_name }}
           persist-credentials: false
 
-      # 產生最近活動（最近合併 PR + 最近 commits）
+      # 產生最近活動（最近合併 PR + 最近 commits），輸出為 steps.gen.outputs.content
       - name: Generate recent activity
         id: gen
         uses: actions/github-script@v7
@@ -40,7 +33,7 @@ jobs:
             const repo  = context.repo.repo;
             const per = 5;
 
-            // 最近合併 PR
+            // 最近合併的 PR
             const prs = await github.rest.pulls.list({
               owner, repo, state: 'closed', per_page: 20, sort: 'updated', direction: 'desc'
             });
@@ -70,7 +63,7 @@ jobs:
       - name: Debug: show README & marker lines
         shell: bash
         run: |
-          echo "----- HEAD: $(git rev-parse --abbrev-ref HEAD) -----"
+          echo "----- REF: ${{ github.ref_name }} -----"
           echo "----- README (first 200 lines) -----"
           nl -ba README.md | sed -n '1,200p' || true
           echo "----- Grep markers (tolerant) -----"
@@ -88,17 +81,17 @@ jobs:
             echo "::error ::README markers not found (check lines, spaces, or code blocks)"; exit 1
           fi
           python3 - <<'PY'
-import re,sys,io
+import re,sys
 start = r'<!--[ \t]*RECENT_ACTIVITY:start[ \t]*-->'
 end   = r'<!--[ \t]*RECENT_ACTIVITY:end[ \t]*-->'
-with open("README.md", "r", encoding="utf-8") as f:
+with open("README.md","r",encoding="utf-8") as f:
     txt = f.read()
-with open("_activity.md", "r", encoding="utf-8") as f:
+with open("_activity.md","r",encoding="utf-8") as f:
     content = f.read().rstrip()
 if not re.search(start, txt, flags=re.S) or not re.search(end, txt, flags=re.S):
     print("Markers not found", file=sys.stderr); sys.exit(1)
 new = re.sub(start + r'.*?' + end, start + '\n' + content + '\n' + end, txt, flags=re.S)
-with open("README.md", "w", encoding="utf-8") as f:
+with open("README.md","w",encoding="utf-8") as f:
     f.write(new)
 print("README updated between markers.")
 PY
@@ -115,5 +108,4 @@ PY
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md _activity.md || true
           git commit -m "chore(readme): update recent activity [skip ci]"
-          git push "https://${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:${{ env.TARGET_REF }}
-```
+          git push "https://${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:${{ github.ref_name }}
