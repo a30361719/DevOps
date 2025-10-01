@@ -1,16 +1,95 @@
-name: YAML Sanity
+name: Update README Activity
 
 on:
   workflow_dispatch: {}
+  # schedule:
+  #   - cron: "0 */6 * * *"  # 每 6 小時跑一次（可選）
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: read
 
 jobs:
-  ping:
+  update:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Hello
+      - name: "Checkout"
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: true
+
+      - name: "Debug: markers & env"
         shell: bash
         run: |
-          echo "YAML indentation OK on ${{ github.ref_name }}"
+          set -e
+          echo "REF=${{ github.ref_name }}"
+          test -f README.md || { echo "::error file not found: README.md"; exit 1; }
+          echo "----- README first 80 lines -----"
+          nl -ba README.md | sed -n '1,80p'
+          echo "----- Marker grep -----"
+          grep -En '<!--[[:space:]]*RECENT_ACTIVITY:start[[:space:]]*-->' README.md || true
+          grep -En '<!--[[:space:]]*RECENT_ACTIVITY:end[[:space:]]*-->'   README.md || true
+
+      - name: "Generate recent activity"
+        id: gen
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const per = 5;
+
+            const prs = await github.rest.pulls.list({
+              owner, repo, state: 'closed', per_page: 20, sort: 'updated', direction: 'desc'
+            });
+            const merged = prs.data.filter(p => p.merged_at).slice(0, per);
+
+            const commits = await github.rest.repos.listCommits({ owner, repo, per_page: per });
+
+            function d(s){ return new Date(s).toISOString().slice(0,10); }
+            const prLines = merged.map(p => `- Merged PR [#${p.number} ${p.title}](${p.html_url}) on ${d(p.merged_at)}`);
+            const commitLines = commits.data.map(c => `- ${c.sha.slice(0,7)} ${c.commit.message.split('\n')[0]} (${d(c.commit.author.date)})`);
+
+            const md = ['### Recent Merged PRs', ...prLines, '', '### Recent Commits', ...commitLines].join('\n');
+            core.setOutput('content', md);
+
+      - name: "Write content file"
+        shell: bash
+        run: |
+          printf "%s" "${{ steps.gen.outputs.content }}" > _activity.md
+          echo "---- activity preview ----"
+          sed -n '1,40p' _activity.md || true
+
+      - name: "Update README between markers"
+        shell: bash
+        run: |
+          python3 - <<'PY'
+            import re,sys
+            start = r'<!--[ \t]*RECENT_ACTIVITY:start[ \t]*-->'
+            end   = r'<!--[ \t]*RECENT_ACTIVITY:end[ \t]*-->'
+            with open("README.md","r",encoding="utf-8") as f:
+                txt = f.read()
+            with open("_activity.md","r",encoding="utf-8") as f:
+                content = f.read().rstrip()
+            if not re.search(start, txt, flags=re.S) or not re.search(end, txt, flags=re.S):
+                print("markers not found", file=sys.stderr); sys.exit(1)
+            new = re.sub(start + r'.*?' + end, start + '\n' + content + '\n' + end, txt, flags=re.S)
+            with open("README.md","w",encoding="utf-8") as f:
+                f.write(new)
+            print("README updated between markers.")
+          PY
+
+      - name: "Commit & push"
+        shell: bash
+        run: |
+          if git diff --quiet README.md; then
+            echo "No README changes"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md _activity.md || true
+          git commit -m "chore(readme): update recent activity [skip ci]"
+          git push origin HEAD:${{ github.ref_name }}
