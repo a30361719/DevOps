@@ -1,137 +1,16 @@
-name: Update README Activity
+name: YAML Sanity
 
 on:
-  workflow_dispatch: {}          # 手動觸發
-  # schedule:
-  #   - cron: "0 */6 * * *"      # 每 6 小時跑一次
+  workflow_dispatch: {}
 
 permissions:
-  contents: write
-  pull-requests: read
+  contents: read
 
 jobs:
-  update:
+  ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          # 使用 ref: ${{ github.ref_name }} 確保在正確的分支上操作
-          ref: ${{ github.ref_name }}
-          persist-credentials: false
-
-      - name: Generate recent activity
-        id: gen
-        uses: actions/github-script@v7
-        with:
-          # 建議使用 actions/github-script 的預設 token，它擁有足夠權限
-          # 如果遇到權限問題，再考慮使用自定義的 REPO_TOKEN
-          github-token: ${{ secrets.GITHUB_TOKEN }} # 建議使用 GITHUB_TOKEN
-          script: |
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
-            const per = 5;
-            
-            // 獲取最近關閉的 PR，並過濾出已合併的
-            const prs = await github.rest.pulls.list({
-              owner, repo, state: 'closed', per_page: 20, sort: 'updated', direction: 'desc'
-            });
-            const merged = prs.data.filter(p => p.merged_at).slice(0, per);
-            
-            // 獲取最近的提交
-            const commits = await github.rest.repos.listCommits({ owner, repo, per_page: per });
-            
-            // 格式化日期函數
-            function d(s){ return new Date(s).toISOString().slice(0,10); }
-            
-            // 格式化 PR 列表
-            const prLines = merged.map(p => `- Merged PR [#${p.number} ${p.title}](${p.html_url}) on ${d(p.merged_at)}`);
-            
-            // 格式化 Commit 列表
-            const commitLines = commits.data.map(c => `- \`${c.sha.slice(0,7)}\` ${c.commit.message.split('\n')[0]} (${d(c.commit.author.date)})`);
-            
-            // 組合 Markdown 內容
-            const md = [
-              '### Recent Merged PRs',
-              ...prLines,
-              '',
-              '### Recent Commits',
-              ...commitLines
-            ].join('\n');
-            
-            core.setOutput('content', md)
-
-      - name: Write content file
-        run: |
-          printf "%s" "${{ steps.gen.outputs.content }}" > _activity.md
-
-      - name: Debug: show README & marker lines
-        shell: bash
-        # 修正了這裡的縮排，確保 run: 後的腳本正確對齊
-        run: |
-          echo "----- REF: ${{ github.ref_name }} -----"
-          echo "----- README.md HEAD -----"
-          nl -ba README.md | sed -n '1,20p' || true
-          echo "----- MARKER CHECKS -----"
-          grep -En '' README.md || true
-          grep -En ''   README.md || true
-
-      - name: Update README between markers (tolerant)
+      - name: Hello
         shell: bash
         run: |
-          set -euo pipefail
-          start=''
-          end=''
-          
-          if ! grep -Eq "$start" README.md || ! grep -Eq "$end" README.md; then
-            echo "::error ::README markers not found"; exit 1
-          fi
-          
-          # 使用 Python 進行替換，因為它能更好地處理多行替換
-          python3 - <<'PY'
-import re,sys
-
-start = r''
-end   = r''
-
-try:
-    txt = open("README.md","r",encoding="utf-8").read()
-    content = open("_activity.md","r",encoding="utf-8").read().rstrip()
-except FileNotFoundError as e:
-    print(f"Error reading file: {e}")
-    sys.exit(1)
-
-# 使用 re.S 旗標讓 '.' 匹配換行符
-new = re.sub(start + r'.*?' + end, start + '\n' + content + '\n' + end, txt, flags=re.S)
-
-if new == txt:
-    print("No changes detected in README content.")
-else:
-    open("README.md","w",encoding="utf-8").write(new)
-    print("README updated successfully between markers.")
-PY
-
-      - name: Commit & push changes
-        env:
-          # 建議使用 GITHUB_TOKEN，它自動擁有寫入權限
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          # 檢查是否有實際的變更
-          if git diff --quiet README.md; then
-            echo "No README changes"; exit 0
-          fi
-          
-          # 配置 git user
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
-          # 添加 README.md 和生成的 _activity.md (儘管 _activity.md 是暫時的，但加進去無妨)
-          git add README.md _activity.md
-          
-          # 提交變更
-          git commit -m "chore(readme): update recent activity [skip ci]"
-          
-          # 推送變更
-          # 使用 GH_TOKEN 進行身份驗證
-          git push "https://${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:${{ github.ref_name }}
+          echo "YAML indentation OK on ${{ github.ref_name }}"
